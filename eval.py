@@ -94,6 +94,8 @@ def main():
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--num-gradcam", type=int, default=16,
                         help="Number of random GradCAM samples")
+    parser.add_argument("--tta", action="store_true",
+                        help="Enable test-time augmentation (3 scales x flip = 6 views)")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -181,6 +183,59 @@ def main():
         c = sorted_idx[-(i + 1)].item()
         print(f"  {c:3d} {class_names[c]:45s} {100*class_acc[c]:.2f}%")
 
+    # ==================== TTA (optional) ====================
+    if args.tta:
+        print(f"\n{'='*60}")
+        print("Running TTA (3 scales x 2 flips = 6 views)...")
+        tta_transforms = []
+        for size in [224, 256, 288]:
+            for flip in [False, True]:
+                t = [transforms.Resize(size), transforms.CenterCrop(224)]
+                if flip:
+                    t.append(transforms.RandomHorizontalFlip(p=1.0))
+                t.extend([transforms.ToTensor(),
+                          transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
+                tta_transforms.append(transforms.Compose(t))
+
+        all_logits = []
+        for t_idx, tfm in enumerate(tta_transforms):
+            ds = StanfordCarsDataset(raw["test"], tfm)
+            loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False,
+                                num_workers=4, pin_memory=True)
+            logits = []
+            with torch.no_grad():
+                for inputs, _ in loader:
+                    logits.append(model(inputs.to(device)).cpu())
+            all_logits.append(torch.cat(logits))
+            print(f"  Pass {t_idx+1}/6 done")
+
+        avg_logits = torch.stack(all_logits).mean(dim=0)
+        tta_preds = avg_logits.argmax(dim=1)
+
+        # TTA overall accuracy
+        tta_correct = (tta_preds == all_labels).sum().item()
+        tta_acc = 100.0 * tta_correct / len(all_labels)
+        print(f"\nTTA accuracy: {tta_acc:.2f}%  (baseline: {overall_acc:.2f}%,"
+              f" delta: {tta_acc - overall_acc:+.2f}%)")
+
+        # TTA per-class accuracy comparison for bottom 10
+        tta_class_correct = torch.zeros(num_classes)
+        for i in range(len(all_labels)):
+            t = all_labels[i].item()
+            if tta_preds[i].item() == t:
+                tta_class_correct[t] += 1
+        tta_class_acc = torch.zeros(num_classes)
+        tta_class_acc[valid_mask] = tta_class_correct[valid_mask] / class_total[valid_mask]
+
+        print(f"\nBottom 10 comparison (baseline → TTA):")
+        for i in range(10):
+            c = sorted_idx[i].item()
+            old = 100 * class_acc[c]
+            new = 100 * tta_class_acc[c]
+            delta = new - old
+            print(f"  {c:3d} {class_names[c]:45s} {old:.1f}% → {new:.1f}% ({delta:+.1f}%)")
+        print(f"{'='*60}")
+
     # ==================== 2. Most Confused Pairs ====================
     # Zero out diagonal, find top-10 off-diagonal entries
     conf_off = confusion.clone().float()
@@ -200,6 +255,10 @@ def main():
         conf_off[true_c, pred_c] = 0  # zero out to find next
 
     # ==================== 3. GradCAM — Random Samples ====================
+    if args.num_gradcam <= 0:
+        print("\nSkipping GradCAM (--num-gradcam 0).")
+        return
+
     print(f"\nGenerating GradCAM for {args.num_gradcam} random test samples...")
     target_layer = model.layer4[-1]
     random_indices = random.sample(range(len(test_set)), args.num_gradcam)

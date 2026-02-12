@@ -7,6 +7,7 @@ Fine-tune an ImageNet-pretrained ResNet-50 on [Stanford Cars](https://ai.stanfor
 | Metric | Value |
 |--------|-------|
 | Test Accuracy | **89.38%** |
+| Test Accuracy (TTA) | **90.32%** |
 | Training Time | 18.9 min (RTX 5080) |
 | 100% Accuracy Classes | 15 / 196 |
 | Worst Class | Chevrolet Express Van 2007 (42.86%) |
@@ -89,6 +90,7 @@ Saves `best_model.pth` (best test accuracy checkpoint).
 pip install grad-cam matplotlib  # one-time
 
 python eval.py                          # default: best_model.pth
+python eval.py --tta                    # test-time augmentation (6 views)
 python eval.py --num-gradcam 32         # more GradCAM samples
 python eval.py --checkpoint my_model.pth
 ```
@@ -98,6 +100,7 @@ Outputs:
 - Top-10 most confused class pairs
 - `gradcam_samples.png` -- GradCAM on random test samples
 - `gradcam_worst.png` -- GradCAM on misclassified samples from worst classes
+- With `--tta`: accuracy boost via 3-scale x 2-flip averaging (89.38% -> 90.32%)
 
 ## Dataset
 

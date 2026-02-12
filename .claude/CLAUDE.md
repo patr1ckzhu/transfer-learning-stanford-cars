@@ -41,11 +41,12 @@ eval.py   — 评估 + 分析：overall/per-class accuracy、混淆对分析、G
 1. **Overall + Per-class accuracy**: 196 类各自准确率，带类名显示（如 "BMW M3 Coupe 2012"）
 2. **Bottom/Top 10**: 最差/最好的 10 个类
 3. **混淆对分析**: 从 confusion matrix 提取 Top-10 最易混淆类别对（off-diagonal 最大值）
-4. **GradCAM 可视化**:
-   - `gradcam_samples.png` — 随机 16 张 test 样本热力图（`--num-gradcam` 控制数量）
+4. **TTA (Test-Time Augmentation)**: `--tta` 启用，3 尺度(224/256/288) x 2(原图+翻转) = 6 视角取平均
+5. **GradCAM 可视化**:
+   - `gradcam_samples.png` — 随机 16 张 test 样本热力图（`--num-gradcam` 控制数量，0 跳过）
    - `gradcam_worst.png` — Bottom-5 最差类各 1 张错误预测样本热力图
    - 目标层: `model.layer4[-1]`（ResNet-50 最后残差块）
-5. 自动处理 `torch.compile` checkpoint（strip `_orig_mod.` prefix）
+6. 自动处理 `torch.compile` checkpoint（strip `_orig_mod.` prefix）
 
 ### eval.py 依赖
 - `grad-cam` (`pip install grad-cam`)
@@ -103,6 +104,11 @@ eval.py   — 评估 + 分析：overall/per-class accuracy、混淆对分析、G
 | Dodge Caliber Wagon 2007 | Dodge Caliber Wagon 2012 | 12 |
 | Dodge Sprinter Cargo Van 2009 | Mercedes-Benz Sprinter Van 2012 | 12 |
 
+### TTA 结果
+- **Overall: 89.38% → 90.32% (+0.95%)**，零训练成本
+- 部分最差类有显著提升（Aston Martin V8 Vantage +11.1%，Audi 100 Sedan +5.0%）
+- Cargo Van 等本质极其相似的类 TTA 无法帮助
+
 ### GradCAM 观察
 - 正确预测: 模型关注车身轮廓、进气格栅、尾灯等品牌特征区域
 - 错误预测（worst classes）: 注意力分散或聚焦在无关区域（背景、水印）
@@ -110,5 +116,5 @@ eval.py   — 评估 + 分析：overall/per-class accuracy、混淆对分析、G
 ## 参考
 - 论文基准: ResNet-50 + Stanford Cars ≈ 85-90% test accuracy
 - Baseline 项目: `PyTorch-Stanford-Cars-Baselines`（ResNet-50 pretrained = 90.0%）
-- 我们的最佳结果: **89.38%**（与 baseline 基本持平）
+- 我们的最佳结果: **89.38%**（单次推理），**90.32%**（TTA 6 视角）
 - 用户有 ResNet-18 CIFAR-10 从零实现经验
