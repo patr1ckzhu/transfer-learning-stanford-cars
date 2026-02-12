@@ -34,8 +34,22 @@
 ## 项目结构
 ```
 train.py  — 单阶段全参数 fine-tune（参考 baseline，SGD lr=0.1 + step decay）
-eval.py   — 加载 best_model.pth 评估 overall + per-class accuracy
+eval.py   — 评估 + 分析：overall/per-class accuracy、混淆对分析、GradCAM 可视化
 ```
+
+### eval.py 功能
+1. **Overall + Per-class accuracy**: 196 类各自准确率，带类名显示（如 "BMW M3 Coupe 2012"）
+2. **Bottom/Top 10**: 最差/最好的 10 个类
+3. **混淆对分析**: 从 confusion matrix 提取 Top-10 最易混淆类别对（off-diagonal 最大值）
+4. **GradCAM 可视化**:
+   - `gradcam_samples.png` — 随机 16 张 test 样本热力图（`--num-gradcam` 控制数量）
+   - `gradcam_worst.png` — Bottom-5 最差类各 1 张错误预测样本热力图
+   - 目标层: `model.layer4[-1]`（ResNet-50 最后残差块）
+5. 自动处理 `torch.compile` checkpoint（strip `_orig_mod.` prefix）
+
+### eval.py 依赖
+- `grad-cam` (`pip install grad-cam`)
+- `matplotlib`
 
 ## 当前训练配置（第 7 轮 — 参考 baseline）
 - 分辨率: 224（匹配 ImageNet 预训练）
@@ -77,6 +91,21 @@ eval.py   — 加载 best_model.pth 评估 overall + per-class accuracy
 3. **分辨率必须匹配预训练**: 448 输入破坏了 ResNet-50 在 224 上学到的特征表示
 4. **batch size 和 lr 是绑定的**: batch=128 + lr=0.1 是经过验证的组合，小 batch 需要按比例降 lr
 5. **简单方法优先**: 最朴素的配置（SGD + step decay + crop+flip）反而最有效
+
+## 模型分析结果（eval.py 输出）
+
+### 最易混淆 Top-5
+| True | Predicted | Count |
+|------|-----------|-------|
+| Audi S5 Coupe 2012 | Audi A5 Coupe 2012 | 14 |
+| Audi TTS Coupe 2012 | Audi TT Hatchback 2011 | 13 |
+| Audi TT Hatchback 2011 | Audi TTS Coupe 2012 | 12 |
+| Dodge Caliber Wagon 2007 | Dodge Caliber Wagon 2012 | 12 |
+| Dodge Sprinter Cargo Van 2009 | Mercedes-Benz Sprinter Van 2012 | 12 |
+
+### GradCAM 观察
+- 正确预测: 模型关注车身轮廓、进气格栅、尾灯等品牌特征区域
+- 错误预测（worst classes）: 注意力分散或聚焦在无关区域（背景、水印）
 
 ## 参考
 - 论文基准: ResNet-50 + Stanford Cars ≈ 85-90% test accuracy
