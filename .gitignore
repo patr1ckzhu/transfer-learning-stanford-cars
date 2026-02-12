@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Model weights
+*.pth
+
+# IDE
+.idea/
+
+# Claude Code
+.claude/settings.local.json
