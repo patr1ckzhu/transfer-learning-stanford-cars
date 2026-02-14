@@ -1,16 +1,13 @@
 # Transfer Learning: ResNet-50 on Stanford Cars
 
-Fine-tune an ImageNet-pretrained ResNet-50 on [Stanford Cars](https://ai.stanford.edu/~jkrause/cars/car_dataset.html) (196 car classes). Achieves **89.38% test accuracy**, matching the published baseline (~90%).
+Fine-tune an ImageNet-pretrained ResNet-50 on [Stanford Cars](https://ai.stanford.edu/~jkrause/cars/car_dataset.html) (196 car classes). Achieves **91.78% test accuracy**, surpassing the published baseline (~90%).
 
 ## Results
 
-| Metric | Value |
-|--------|-------|
-| Test Accuracy | **89.38%** |
-| Test Accuracy (TTA) | **90.32%** |
-| Training Time | 18.9 min (RTX 5080) |
-| 100% Accuracy Classes | 15 / 196 |
-| Worst Class | Chevrolet Express Van 2007 (42.86%) |
+| Config | Test Acc | TTA | Training Time |
+|--------|----------|-----|---------------|
+| 224px, batch=128, lr=0.1 | 89.38% | 90.32% | 18.9 min |
+| **448px, batch=64, lr=0.05** | **91.78%** | **91.93%** | **50.3 min** |
 
 ### GradCAM Visualizations
 
@@ -34,22 +31,25 @@ The top errors are between visually near-identical cars (same model different ye
 | Dodge Caliber Wagon 2007 | Dodge Caliber Wagon 2012 | 12 |
 | Dodge Sprinter Cargo Van 2009 | Mercedes-Benz Sprinter Van 2012 | 12 |
 
-## Training Configuration
+## Training Configuration (Best: 448px)
 
 ```
 Model:      ResNet-50 (ImageNet V2 pretrained)
-Resolution: 224x224
-Optimizer:  SGD (lr=0.1, momentum=0.9, weight_decay=1e-4)
+Resolution: 448x448 (--resolution 448)
+Optimizer:  SGD (lr=0.05, momentum=0.9, weight_decay=1e-4)
 Scheduler:  Step decay /10 every 30 epochs
-Augment:    RandomResizedCrop(224) + RandomHorizontalFlip
-Batch size: 128
+Augment:    RandomResizedCrop(448) + RandomHorizontalFlip
+Batch size: 64
 Epochs:     90
 Speedups:   AMP + torch.compile + channels_last
+GPU Memory: ~14 GB / 16 GB (RTX 5080)
 ```
+
+The lr is scaled from the 224px baseline (0.1) by the linear scaling rule: `lr = 0.1 * (64/128) = 0.05`.
 
 ## Experiment Log
 
-7 runs total. Runs 1-6 failed (41-52%) due to lr too low, frozen backbone, wrong resolution, and over-regularization. Run 7 followed an open-source baseline and succeeded immediately.
+8 runs total. Runs 1-6 failed (41-52%) due to lr too low, frozen backbone, and over-regularization. Run 7 followed an open-source baseline and succeeded. Run 8 pushed further with 448px resolution.
 
 | Run | Strategy | lr | Resolution | Test Acc |
 |-----|----------|----|-----------|----------|
@@ -59,7 +59,8 @@ Speedups:   AMP + torch.compile + channels_last
 | 4 | 2-stage AdamW | bb:3e-4 fc:3e-3 | 448 | 50.3% |
 | 5 | 2-stage SGD | bb:1e-3 fc:1e-2 | 224 | 51.4% |
 | 6 | 2-stage SGD | bb:5e-4 fc:5e-3 | 448 | 41.2% |
-| **7** | **1-stage SGD** | **0.1 unified** | **224** | **89.38%** |
+| 7 | 1-stage SGD | 0.1 unified | 224 | 89.38% |
+| **8** | **1-stage SGD** | **0.05 unified** | **448** | **91.78%** |
 
 ## Lessons Learned
 
@@ -67,7 +68,7 @@ Speedups:   AMP + torch.compile + channels_last
 
 2. **Don't freeze the backbone** -- single-stage full-parameter training with a unified lr outperforms 2-stage frozen+unfrozen approaches. SGD gradients naturally scale per-layer updates.
 
-3. **Resolution must match pretraining** -- 448px input destroys the feature representations learned at 224px.
+3. **Higher resolution helps, but only with correct lr** -- Run 6 used 448px with lr=5e-4 and got 41%. Run 8 used 448px with lr=0.05 and got 91.78%. The resolution wasn't the problem -- the lr was.
 
 4. **Batch size and lr are coupled** -- batch=128 + lr=0.1 is a validated combo. Small batches need proportionally lower lr.
 
@@ -78,8 +79,11 @@ Speedups:   AMP + torch.compile + channels_last
 ### Training
 
 ```bash
-# On GPU machine
-python train.py --epochs 90 --lr 0.1 --batch-size 128
+# 448px (best accuracy)
+python train.py --resolution 448 --batch-size 64 --lr 0.05
+
+# 224px (faster, baseline)
+python train.py --resolution 224 --batch-size 128 --lr 0.1
 ```
 
 Saves `best_model.pth` (best test accuracy checkpoint).
@@ -89,10 +93,10 @@ Saves `best_model.pth` (best test accuracy checkpoint).
 ```bash
 pip install grad-cam matplotlib  # one-time
 
-python eval.py                          # default: best_model.pth
-python eval.py --tta                    # test-time augmentation (6 views)
-python eval.py --num-gradcam 32         # more GradCAM samples
-python eval.py --checkpoint my_model.pth
+python eval.py --resolution 448                # match training resolution
+python eval.py --resolution 448 --tta          # test-time augmentation (6 views)
+python eval.py --num-gradcam 32                # more GradCAM samples
+python eval.py --checkpoint my_model.pth       # custom checkpoint
 ```
 
 Outputs:
@@ -100,7 +104,7 @@ Outputs:
 - Top-10 most confused class pairs
 - `gradcam_samples.png` -- GradCAM on random test samples
 - `gradcam_worst.png` -- GradCAM on misclassified samples from worst classes
-- With `--tta`: accuracy boost via 3-scale x 2-flip averaging (89.38% -> 90.32%)
+- With `--tta`: accuracy boost via 3-scale x 2-flip averaging (+0.15% at 448px, +0.95% at 224px)
 
 ## Dataset
 

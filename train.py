@@ -39,16 +39,17 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
-def get_dataloaders(batch_size):
+def get_dataloaders(batch_size, resolution=224):
+    resize_eval = int(resolution * 256 / 224)  # 224→256, 448→512
     transform_train = transforms.Compose([
-        transforms.RandomResizedCrop(224),
+        transforms.RandomResizedCrop(resolution),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
     transform_eval = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
+        transforms.Resize(resize_eval),
+        transforms.CenterCrop(resolution),
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
@@ -132,12 +133,13 @@ def main():
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--step-size", type=int, default=30)
+    parser.add_argument("--resolution", type=int, default=224)
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    train_loader, test_loader = get_dataloaders(args.batch_size)
+    train_loader, test_loader = get_dataloaders(args.batch_size, args.resolution)
     print(f"Train: {len(train_loader.dataset)}, Test: {len(test_loader.dataset)}")
 
     torch.backends.cudnn.benchmark = True
@@ -158,7 +160,7 @@ def main():
     )
 
     print(f"\nConfig: epochs={args.epochs}, lr={args.lr}, batch_size={args.batch_size}, "
-          f"step_decay=÷10 every {args.step_size} epochs")
+          f"resolution={args.resolution}, step_decay=÷10 every {args.step_size} epochs")
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Trainable: {trainable:,} / {total_params:,}")

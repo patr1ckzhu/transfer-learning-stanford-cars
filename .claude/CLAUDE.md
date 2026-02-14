@@ -52,16 +52,17 @@ eval.py   — 评估 + 分析：overall/per-class accuracy、混淆对分析、G
 - `grad-cam` (`pip install grad-cam`)
 - `matplotlib`
 
-## 当前训练配置（第 7 轮 — 参考 baseline）
-- 分辨率: 224（匹配 ImageNet 预训练）
+## 当前最佳训练配置（Run 8 — 448px）
+- 分辨率: 448（`--resolution 448`）
 - 单阶段全参数训练，无冻结，无 differential lr
-- 优化器: SGD (lr=0.1, momentum=0.9, weight_decay=1e-4)
-- LR 调度: step decay ÷10 every 30 epochs（epoch 0-29: 0.1, 30-59: 0.01, 60-89: 0.001）
-- 数据增强: RandomResizedCrop(224) + RandomHorizontalFlip（最简增强）
+- 优化器: SGD (lr=0.05, momentum=0.9, weight_decay=1e-4)
+- LR 调度: step decay ÷10 every 30 epochs（epoch 0-29: 0.05, 30-59: 0.005, 60-89: 0.0005）
+- 数据增强: RandomResizedCrop(448) + RandomHorizontalFlip（最简增强）
 - 无 Dropout, 无 label_smoothing, 无 ColorJitter
 - AMP, torch.compile, channels_last
-- batch_size=128
+- batch_size=64
 - epochs=90
+- 显存: ~14 GB / 16 GB
 
 ## 实验记录
 
@@ -73,23 +74,30 @@ eval.py   — 评估 + 分析：overall/per-class accuracy、混淆对分析、G
 | 4 | 两阶段+AdamW | 448 | bb3e-4/fc3e-3 | 5e-2 | 16 | 重度 | 50 | 50.3 | wd 太重+过度正则 |
 | 5 | 两阶段+SGD | 224 | bb1e-3/fc1e-2 | 1e-4 | 16 | crop+flip | 100 | 51.4 | 过拟合(train73%/val52%) |
 | 6 | 两阶段+SGD | 448 | bb5e-4/fc5e-3 | 1e-4 | 16 | 适度CJ | 100 | 41.2 | 448 更差，Phase1仅19% |
-| **7** | **单阶段SGD** | **224** | **0.1统一** | **1e-4** | **128** | **crop+flip** | **90** | **89.38%** | **参考baseline，成功** |
+| 7 | 单阶段SGD | 224 | 0.1统一 | 1e-4 | 128 | crop+flip | 90 | 89.38% | 参考baseline，成功 |
+| **8** | **单阶段SGD** | **448** | **0.05统一** | **1e-4** | **64** | **crop+flip** | **90** | **91.78%** | **高分辨率+linear scaling** |
 
-### Run 7 训练曲线
-- Epoch 1: train 10.6% / test 19.6%（高 lr 快速启动）
-- Epoch 10: train 83.0% / test 73.2%
-- Epoch 30: train 91.0% / test 81.0%（lr=0.1 阶段结束）
-- Epoch 31: lr 降至 0.01 → test 立刻跳到 86.9%（step decay 效果显著）
-- Epoch 44: test 88.9%
-- Epoch 57: test 89.3%
-- Epoch 61: lr 降至 0.001 → 精细调整
+### Run 8 训练曲线（448px）
+- Epoch 1: train 5.1% / test 13.9%（448 特征偏移更大，启动更慢）
+- Epoch 10: train 83.1% / test 81.7%
+- Epoch 30: train 91.3% / test 85.4%（lr=0.05 阶段结束）
+- Epoch 31: lr 降至 0.005 → test 跳到 89.9%
+- Epoch 46: test 91.5%
+- Epoch 61: lr 降至 0.0005 → 精细调整
+- Epoch 81: **best test 91.78%**
+- 总训练时间: 50.3 min（RTX 5080）
+
+### Run 7 训练曲线（224px）
+- Epoch 1: train 10.6% / test 19.6%
+- Epoch 30: train 91.0% / test 81.0%
+- Epoch 31: lr 降至 0.01 → test 跳到 86.9%
 - Epoch 89: **best test 89.38%**
-- 总训练时间: 18.9 min（RTX 5080）
+- 总训练时间: 18.9 min
 
 ### 关键教训（Run 1-6 为什么失败）
 1. **LR 太低是最致命的错误**: baseline 用 0.1，我们最高只用 1e-2（低 10 倍），backbone lr 只有 5e-4（低 200 倍）。Fine-tune 需要足够大的 lr 才能让 backbone 适应新的细粒度分类任务
 2. **两阶段冻结策略是过度设计**: 冻结 backbone 限制了模型适应能力，differential lr 增加了调参复杂度但没有带来收益。直接全参数训练 + 统一 lr，让 SGD 梯度自然决定每层更新幅度
-3. **分辨率必须匹配预训练**: 448 输入破坏了 ResNet-50 在 224 上学到的特征表示
+3. **分辨率可以高于预训练，但 lr 必须正确**: Run 6 用 448+lr=5e-4 惨败(41%)，Run 8 用 448+lr=0.05 达 91.78%。高分辨率本身不是问题，lr 太低才是
 4. **batch size 和 lr 是绑定的**: batch=128 + lr=0.1 是经过验证的组合，小 batch 需要按比例降 lr
 5. **简单方法优先**: 最朴素的配置（SGD + step decay + crop+flip）反而最有效
 
@@ -105,9 +113,13 @@ eval.py   — 评估 + 分析：overall/per-class accuracy、混淆对分析、G
 | Dodge Sprinter Cargo Van 2009 | Mercedes-Benz Sprinter Van 2012 | 12 |
 
 ### TTA 结果
-- **Overall: 89.38% → 90.32% (+0.95%)**，零训练成本
-- 部分最差类有显著提升（Aston Martin V8 Vantage +11.1%，Audi 100 Sedan +5.0%）
-- Cargo Van 等本质极其相似的类 TTA 无法帮助
+| 配置 | 单次推理 | TTA (6 views) |
+|------|---------|---------------|
+| 224px | 89.38% | 90.32% (+0.95%) |
+| 448px | 91.78% | 91.93% (+0.15%) |
+
+- 224px 模型 TTA 收益大（+0.95%），448px 模型 TTA 收益小（+0.15%）
+- 高分辨率模型本身已捕捉足够细节，多尺度变换边际收益低
 
 ### GradCAM 观察
 - 正确预测: 模型关注车身轮廓、进气格栅、尾灯等品牌特征区域
@@ -116,5 +128,5 @@ eval.py   — 评估 + 分析：overall/per-class accuracy、混淆对分析、G
 ## 参考
 - 论文基准: ResNet-50 + Stanford Cars ≈ 85-90% test accuracy
 - Baseline 项目: `PyTorch-Stanford-Cars-Baselines`（ResNet-50 pretrained = 90.0%）
-- 我们的最佳结果: **89.38%**（单次推理），**90.32%**（TTA 6 视角）
+- 我们的最佳结果: **91.78%**（448px 单次），**91.93%**（448px + TTA）
 - 用户有 ResNet-18 CIFAR-10 从零实现经验

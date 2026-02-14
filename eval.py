@@ -96,17 +96,20 @@ def main():
                         help="Number of random GradCAM samples")
     parser.add_argument("--tta", action="store_true",
                         help="Enable test-time augmentation (3 scales x flip = 6 views)")
+    parser.add_argument("--resolution", type=int, default=224)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     random.seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
+    res = args.resolution
+    resize_eval = int(res * 256 / 224)  # 224→256, 448→512
+    print(f"Device: {device}, resolution: {res}")
 
     # --- Data ---
     transform_eval = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
+        transforms.Resize(resize_eval),
+        transforms.CenterCrop(res),
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
@@ -188,9 +191,10 @@ def main():
         print(f"\n{'='*60}")
         print("Running TTA (3 scales x 2 flips = 6 views)...")
         tta_transforms = []
-        for size in [224, 256, 288]:
+        tta_sizes = [res, int(res * 256 / 224), int(res * 288 / 224)]
+        for size in tta_sizes:
             for flip in [False, True]:
-                t = [transforms.Resize(size), transforms.CenterCrop(224)]
+                t = [transforms.Resize(size), transforms.CenterCrop(res)]
                 if flip:
                     t.append(transforms.RandomHorizontalFlip(p=1.0))
                 t.extend([transforms.ToTensor(),
