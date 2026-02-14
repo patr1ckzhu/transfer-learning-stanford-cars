@@ -1,6 +1,6 @@
-"""Stanford Cars 迁移学习训练脚本 (ResNet-50 pretrained on ImageNet).
+"""Stanford Cars 迁移学习训练脚本.
 
-参考 baseline: 单阶段全参数 fine-tune, SGD lr=0.1, step decay ÷10 every 30 epochs.
+支持 ResNet-50 和 EfficientNet-B4, 单阶段全参数 fine-tune, SGD + step decay.
 """
 
 import argparse
@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from torchvision import models, transforms
-from torchvision.models import ResNet50_Weights
+from torchvision.models import ResNet50_Weights, EfficientNet_B4_Weights
 
 from datasets import load_dataset
 
@@ -68,10 +68,13 @@ def get_dataloaders(batch_size, resolution=224):
     return train_loader, test_loader
 
 
-def build_model(num_classes=196):
-    model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
-    in_features = model.fc.in_features
-    model.fc = nn.Linear(in_features, num_classes)
+def build_model(arch="resnet50", num_classes=196):
+    if arch == "efficientnet_b4":
+        model = models.efficientnet_b4(weights=EfficientNet_B4_Weights.IMAGENET1K_V1)
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    else:
+        model = models.resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
     return model
 
 
@@ -133,7 +136,13 @@ def main():
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--step-size", type=int, default=30)
+    parser.add_argument("--optimizer", type=str, default="sgd",
+                        choices=["sgd", "adamw"])
+    parser.add_argument("--scheduler", type=str, default="step",
+                        choices=["step", "cosine"])
     parser.add_argument("--resolution", type=int, default=224)
+    parser.add_argument("--arch", type=str, default="resnet50",
+                        choices=["resnet50", "efficientnet_b4"])
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -145,7 +154,7 @@ def main():
     torch.backends.cudnn.benchmark = True
     torch.set_float32_matmul_precision("high")
 
-    model = build_model(num_classes=196)
+    model = build_model(arch=args.arch, num_classes=196)
     model = model.to(device, memory_format=torch.channels_last)
     if device.type == "cuda":
         model = torch.compile(model)
@@ -154,13 +163,21 @@ def main():
     criterion = nn.CrossEntropyLoss()
     scaler = torch.amp.GradScaler(enabled=(device.type == "cuda"))
 
-    optimizer = optim.SGD(
-        model.parameters(),
-        lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay,
-    )
+    if args.optimizer == "adamw":
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    else:
+        optimizer = optim.SGD(
+            model.parameters(),
+            lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay,
+        )
+
+    if args.scheduler == "cosine":
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    else:
+        scheduler = None
 
     print(f"\nConfig: epochs={args.epochs}, lr={args.lr}, batch_size={args.batch_size}, "
-          f"resolution={args.resolution}, step_decay=÷10 every {args.step_size} epochs")
+          f"resolution={args.resolution}, optimizer={args.optimizer}, scheduler={args.scheduler}")
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Trainable: {trainable:,} / {total_params:,}")
@@ -170,8 +187,13 @@ def main():
 
     for epoch in range(args.epochs):
         t0 = time.time()
-        lr = adjust_learning_rate(optimizer, epoch, args.lr, args.step_size)
+        if scheduler:
+            lr = optimizer.param_groups[0]['lr']
+        else:
+            lr = adjust_learning_rate(optimizer, epoch, args.lr, args.step_size)
         train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device, scaler)
+        if scheduler:
+            scheduler.step()
         test_loss, test_acc = evaluate(model, test_loader, criterion, device)
         elapsed = time.time() - t0
 

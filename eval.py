@@ -21,9 +21,13 @@ import matplotlib.pyplot as plt
 from train import StanfordCarsDataset, IMAGENET_MEAN, IMAGENET_STD
 
 
-def build_model(num_classes=196):
-    model = models.resnet50(weights=None)
-    model.fc = nn.Linear(model.fc.in_features, num_classes)
+def build_model(arch="resnet50", num_classes=196):
+    if arch == "efficientnet_b4":
+        model = models.efficientnet_b4(weights=None)
+        model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    else:
+        model = models.resnet50(weights=None)
+        model.fc = nn.Linear(model.fc.in_features, num_classes)
     return model
 
 
@@ -97,6 +101,8 @@ def main():
     parser.add_argument("--tta", action="store_true",
                         help="Enable test-time augmentation (3 scales x flip = 6 views)")
     parser.add_argument("--resolution", type=int, default=224)
+    parser.add_argument("--arch", type=str, default="resnet50",
+                        choices=["resnet50", "efficientnet_b4"])
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -124,7 +130,7 @@ def main():
 
     # --- Model ---
     num_classes = 196
-    model = build_model(num_classes)
+    model = build_model(arch=args.arch, num_classes=num_classes)
     state_dict = torch.load(args.checkpoint, map_location=device, weights_only=True)
     # Strip _orig_mod. prefix from torch.compile'd checkpoint
     state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
@@ -264,7 +270,10 @@ def main():
         return
 
     print(f"\nGenerating GradCAM for {args.num_gradcam} random test samples...")
-    target_layer = model.layer4[-1]
+    if args.arch == "efficientnet_b4":
+        target_layer = model.features[-1]
+    else:
+        target_layer = model.layer4[-1]
     random_indices = random.sample(range(len(test_set)), args.num_gradcam)
     generate_gradcam_grid(model, test_set, random_indices, class_names,
                           target_layer, device, "gradcam_samples.png",
